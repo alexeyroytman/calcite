@@ -88,6 +88,7 @@ import org.apache.calcite.tools.Frameworks;
 import org.apache.calcite.tools.RelBuilder;
 import org.apache.calcite.util.ImmutableBitSet;
 import org.apache.calcite.util.ImmutableIntList;
+import org.apache.calcite.util.SaffronProperties;
 
 import com.google.common.base.Function;
 import com.google.common.collect.ImmutableList;
@@ -100,9 +101,12 @@ import com.google.common.collect.Sets;
 import org.hamcrest.CoreMatchers;
 import org.hamcrest.CustomTypeSafeMatcher;
 import org.hamcrest.Matcher;
+import org.hamcrest.core.Is;
+import org.junit.Assume;
 import org.junit.Ignore;
 import org.junit.Test;
 
+import java.io.File;
 import java.lang.reflect.Method;
 import java.math.BigDecimal;
 import java.util.ArrayList;
@@ -116,6 +120,9 @@ import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Set;
+import java.util.concurrent.locks.ReentrantLock;
+
+import static org.apache.calcite.test.Matchers.within;
 
 import static org.hamcrest.CoreMatchers.endsWith;
 import static org.hamcrest.CoreMatchers.equalTo;
@@ -161,11 +168,11 @@ public class RelMetadataTest extends SqlToRelTestBase {
 
   private static final List<String> EMP_QNAME = ImmutableList.of("CATALOG", "SALES", "EMP");
 
-  //~ Methods ----------------------------------------------------------------
+  /** Ensures that tests that use a lot of memory do not run at the same
+   * time. */
+  private static final ReentrantLock LOCK = new ReentrantLock();
 
-  private static Matcher<? super Number> nearTo(Number v, Number epsilon) {
-    return equalTo(v); // TODO: use epsilon
-  }
+  //~ Methods ----------------------------------------------------------------
 
   // ----------------------------------------------------------------------
   // Tests for getPercentageOriginalRows
@@ -777,7 +784,31 @@ public class RelMetadataTest extends SqlToRelTestBase {
     final RelMetadataQuery mq = RelMetadataQuery.instance();
     Double result = mq.getSelectivity(rel, null);
     assertThat(result,
-        nearTo(DEFAULT_COMP_SELECTIVITY * DEFAULT_EQUAL_SELECTIVITY, EPSILON));
+        within(DEFAULT_COMP_SELECTIVITY * DEFAULT_EQUAL_SELECTIVITY, EPSILON));
+  }
+
+  /** Test case for
+   * <a href="https://issues.apache.org/jira/browse/CALCITE-1808">[CALCITE-1808]
+   * JaninoRelMetadataProvider loading cache might cause
+   * OutOfMemoryError</a>. */
+  @Test public void testMetadataHandlerCacheLimit() {
+    Assume.assumeTrue("If cache size is too large, this test may fail and the "
+            + "test won't be to blame",
+        SaffronProperties.INSTANCE.metadataHandlerCacheMaximumSize().get()
+            < 10_000);
+    final int iterationCount = 2_000;
+    final RelNode rel = convertSql("select * from emp");
+    final RelMetadataProvider metadataProvider =
+        rel.getCluster().getMetadataProvider();
+    final RelOptPlanner planner = rel.getCluster().getPlanner();
+    for (int i = 0; i < iterationCount; i++) {
+      RelMetadataQuery.THREAD_PROVIDERS.set(
+          JaninoRelMetadataProvider.of(
+              new CachingRelMetadataProvider(metadataProvider, planner)));
+      final RelMetadataQuery mq = RelMetadataQuery.instance();
+      final Double result = mq.getRowCount(rel);
+      assertThat(result, within(14d, 0.1d));
+    }
   }
 
   @Test public void testDistinctRowCountTable() {
@@ -1283,8 +1314,8 @@ public class RelMetadataTest extends SqlToRelTestBase {
         LogicalAggregate.create(join, ImmutableBitSet.of(2, 0),
             ImmutableList.<ImmutableBitSet>of(),
             ImmutableList.of(
-                AggregateCall.create(
-                    SqlStdOperatorTable.COUNT, false, ImmutableIntList.of(),
+                AggregateCall.create(SqlStdOperatorTable.COUNT,
+                    false, false, ImmutableIntList.of(),
                     -1, 2, join, null, null)));
     rowSize = mq.getAverageRowSize(aggregate);
     columnSizes = mq.getAverageColumnSizes(aggregate);
@@ -1444,6 +1475,10 @@ public class RelMetadataTest extends SqlToRelTestBase {
    * columns</a>. Since this is a performance problem, the test result does not
    * change, but takes over 15 minutes before the fix and 6 seconds after. */
   @Test(timeout = 20_000) public void testPullUpPredicatesForExprsItr() {
+    // If we're running Windows, we are probably in a VM and the test may
+    // exceed timeout by a small margin.
+    Assume.assumeThat("Too slow to run on Windows",
+        File.separatorChar, Is.is('/'));
     final String sql = "select a.EMPNO, a.ENAME\n"
         + "from (select * from sales.emp ) a\n"
         + "join (select * from sales.emp  ) b\n"
@@ -1459,10 +1494,14 @@ public class RelMetadataTest extends SqlToRelTestBase {
         + "on b.mgr =a.mgr and a.empno =b.deptno and a.comm=b.comm\n"
         + "  and a.deptno=b.deptno and a.job=b.job and a.ename=b.ename\n"
         + "  and a.mgr=b.deptno and a.slacker=b.slacker";
-    final RelNode rel = convertSql(sql);
-    final RelMetadataQuery mq = RelMetadataQuery.instance();
-    RelOptPredicateList inputSet = mq.getPulledUpPredicates(rel.getInput(0));
-    assertThat(inputSet.pulledUpPredicates.size(), is(131089));
+    // Lock to ensure that only one test is using this method at a time.
+    try (final JdbcAdapterTest.LockWrapper ignore =
+             JdbcAdapterTest.LockWrapper.lock(LOCK)) {
+      final RelNode rel = convertSql(sql);
+      final RelMetadataQuery mq = RelMetadataQuery.instance();
+      RelOptPredicateList inputSet = mq.getPulledUpPredicates(rel.getInput(0));
+      assertThat(inputSet.pulledUpPredicates.size(), is(131089));
+    }
   }
 
   @Test public void testPullUpPredicatesOnConstant() {

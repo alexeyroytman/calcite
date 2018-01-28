@@ -148,7 +148,14 @@ public abstract class SubQueryRemoveRule extends RelOptRule {
         }
       };
 
-  private SubQueryRemoveRule(RelOptRuleOperand operand,
+  /**
+   * Creates a SubQueryRemoveRule.
+   *
+   * @param operand     root operand, must not be null
+   * @param description Description, or null to guess description
+   * @param relBuilderFactory Builder for relational expressions
+   */
+  public SubQueryRemoveRule(RelOptRuleOperand operand,
       RelBuilderFactory relBuilderFactory,
       String description) {
     super(operand, relBuilderFactory, description);
@@ -165,8 +172,8 @@ public abstract class SubQueryRemoveRule extends RelOptRule {
           ImmutableBitSet.of());
       if (unique == null || !unique) {
         builder.aggregate(builder.groupKey(),
-            builder.aggregateCall(SqlStdOperatorTable.SINGLE_VALUE, false, null,
-                null, builder.field(0)));
+            builder.aggregateCall(SqlStdOperatorTable.SINGLE_VALUE, false,
+                false, null, null, builder.field(0)));
       }
       builder.join(JoinRelType.LEFT, builder.literal(true), variablesSet);
       return field(builder, inputCount, offset);
@@ -292,8 +299,8 @@ public abstract class SubQueryRemoveRule extends RelOptRule {
         }
         builder.aggregate(builder.groupKey(),
             builder.count(false, "c"),
-            builder.aggregateCall(SqlStdOperatorTable.COUNT, false, null, "ck",
-                builder.fields()));
+            builder.aggregateCall(SqlStdOperatorTable.COUNT, false, false, null,
+                "ck", builder.fields()));
         builder.as("ct");
         if (!variablesSet.isEmpty()) {
           builder.join(JoinRelType.LEFT, builder.literal(true), variablesSet);

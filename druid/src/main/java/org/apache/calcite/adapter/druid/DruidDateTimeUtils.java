@@ -38,6 +38,8 @@ import com.google.common.collect.Lists;
 import com.google.common.collect.Range;
 import com.google.common.collect.TreeRangeSet;
 
+import org.joda.time.Interval;
+import org.joda.time.chrono.ISOChronology;
 import org.slf4j.Logger;
 
 import java.util.ArrayList;
@@ -56,11 +58,11 @@ public class DruidDateTimeUtils {
   }
 
   /**
-   * Generates a list of {@link LocalInterval}s equivalent to a given
+   * Generates a list of {@link Interval}s equivalent to a given
    * expression. Assumes that all the predicates in the input
    * reference a single column: the timestamp column.
    */
-  public static List<LocalInterval> createInterval(RexNode e, String timeZone) {
+  public static List<Interval> createInterval(RexNode e, String timeZone) {
     final List<Range<TimestampString>> ranges =
         extractRanges(e, TimeZone.getTimeZone(timeZone), false);
     if (ranges == null) {
@@ -78,11 +80,11 @@ public class DruidDateTimeUtils {
         ImmutableList.<Range>copyOf(condensedRanges.asRanges()));
   }
 
-  protected static List<LocalInterval> toInterval(
+  protected static List<Interval> toInterval(
       List<Range<TimestampString>> ranges) {
-    List<LocalInterval> intervals = Lists.transform(ranges,
-        new Function<Range<TimestampString>, LocalInterval>() {
-          public LocalInterval apply(Range<TimestampString> range) {
+    List<Interval> intervals = Lists.transform(ranges,
+        new Function<Range<TimestampString>, Interval>() {
+          public Interval apply(Range<TimestampString> range) {
             if (!range.hasLowerBound() && !range.hasUpperBound()) {
               return DruidTable.DEFAULT_INTERVAL;
             }
@@ -100,7 +102,7 @@ public class DruidDateTimeUtils {
                 && range.upperBoundType() == BoundType.CLOSED) {
               end++;
             }
-            return LocalInterval.create(start, end);
+            return new Interval(start, end, ISOChronology.getInstanceUTC());
           }
         });
     if (LOGGER.isDebugEnabled()) {
@@ -247,7 +249,7 @@ public class DruidDateTimeUtils {
     }
   }
 
-  private static TimestampString literalValue(RexNode node, TimeZone timeZone) {
+  protected static TimestampString literalValue(RexNode node, TimeZone timeZone) {
     switch (node.getKind()) {
     case LITERAL:
       switch (((RexLiteral) node).getTypeName()) {
@@ -291,54 +293,29 @@ public class DruidDateTimeUtils {
   }
 
   /**
-   * Infers granularity from a timeunit.
-   * It support {@code FLOOR(<time> TO <timeunit>)} and {@code EXTRACT(<timeunit> FROM <time>)}.
-   * It returns null if it cannot be inferred.
+   * Infers granularity from a time unit.
+   * It supports {@code FLOOR(<time> TO <timeunit>)}
+   * and {@code EXTRACT(<timeunit> FROM <time>)}.
+   * Returns null if it cannot be inferred.
    *
    * @param node the Rex node
    * @return the granularity, or null if it cannot be inferred
    */
-  public static Granularity extractGranularity(RexNode node) {
+  public static Granularity extractGranularity(RexNode node, String timeZone) {
     final int flagIndex;
-    switch (node.getKind()) {
-    case EXTRACT:
+
+    if (TimeExtractionFunction.isValidTimeExtract(node)) {
       flagIndex = 0;
-      break;
-    case FLOOR:
+    } else if (TimeExtractionFunction.isValidTimeFloor(node)) {
       flagIndex = 1;
-      break;
-    default:
+    } else {
+      // We can only infer granularity from floor and extract.
       return null;
     }
     final RexCall call = (RexCall) node;
-    if (call.operands.size() != 2) {
-      return null;
-    }
     final RexLiteral flag = (RexLiteral) call.operands.get(flagIndex);
     final TimeUnitRange timeUnit = (TimeUnitRange) flag.getValue();
-    if (timeUnit == null) {
-      return null;
-    }
-    switch (timeUnit) {
-    case YEAR:
-      return Granularity.YEAR;
-    case QUARTER:
-      return Granularity.QUARTER;
-    case MONTH:
-      return Granularity.MONTH;
-    case WEEK:
-      return Granularity.WEEK;
-    case DAY:
-      return Granularity.DAY;
-    case HOUR:
-      return Granularity.HOUR;
-    case MINUTE:
-      return Granularity.MINUTE;
-    case SECOND:
-      return Granularity.SECOND;
-    default:
-      return null;
-    }
+    return Granularities.createGranularity(timeUnit, timeZone);
   }
 
 }

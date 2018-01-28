@@ -826,6 +826,12 @@ public class RexSimplify {
       // Term is always satisfied given these predicates
       return rexBuilder.makeLiteral(true);
     } else if (range2.lowerEndpoint().equals(range2.upperEndpoint())) {
+      if (range2.lowerBoundType() == BoundType.OPEN
+          || range2.upperBoundType() == BoundType.OPEN) {
+        // range is a point, but does not include its endpoint, therefore is
+        // effectively empty
+        return rexBuilder.makeLiteral(false);
+      }
       // range is now a point; it's worth simplifying
       return rexBuilder.makeCall(SqlStdOperatorTable.EQUALS, comparison.ref,
           rexBuilder.makeLiteral(range2.lowerEndpoint(),
@@ -947,10 +953,7 @@ public class RexSimplify {
    *
    * <p>For example, {@code CAST(1 = 0 AS BOOLEAN)} becomes {@code 1 = 0}. */
   public RexNode removeNullabilityCast(RexNode e) {
-    while (RexUtil.isNullabilityCast(rexBuilder.getTypeFactory(), e)) {
-      e = ((RexCall) e).operands.get(0);
-    }
-    return e;
+    return RexUtil.removeNullabilityCast(rexBuilder.getTypeFactory(), e);
   }
 
   private static <C extends Comparable<C>> RexNode processRange(
@@ -1012,7 +1015,10 @@ public class RexSimplify {
           removeUpperBound = true;
         } else {
           // Remove this term as it is contained in current upper bound
-          terms.set(terms.indexOf(term), rexBuilder.makeLiteral(true));
+          final int index = terms.indexOf(term);
+          if (index >= 0) {
+            terms.set(index, rexBuilder.makeLiteral(true));
+          }
         }
         break;
       }
@@ -1046,7 +1052,10 @@ public class RexSimplify {
           removeUpperBound = true;
         } else {
           // Remove this term as it is contained in current upper bound
-          terms.set(terms.indexOf(term), rexBuilder.makeLiteral(true));
+          final int index = terms.indexOf(term);
+          if (index >= 0) {
+            terms.set(index, rexBuilder.makeLiteral(true));
+          }
         }
         break;
       }
@@ -1081,7 +1090,10 @@ public class RexSimplify {
           removeLowerBound = true;
         } else {
           // Remove this term as it is contained in current lower bound
-          terms.set(terms.indexOf(term), rexBuilder.makeLiteral(true));
+          final int index = terms.indexOf(term);
+          if (index >= 0) {
+            terms.set(index, rexBuilder.makeLiteral(true));
+          }
         }
         break;
       }
@@ -1115,7 +1127,10 @@ public class RexSimplify {
           removeLowerBound = true;
         } else {
           // Remove this term as it is contained in current lower bound
-          terms.set(terms.indexOf(term), rexBuilder.makeLiteral(true));
+          final int index = terms.indexOf(term);
+          if (index >= 0) {
+            terms.set(index, rexBuilder.makeLiteral(true));
+          }
         }
         break;
       }

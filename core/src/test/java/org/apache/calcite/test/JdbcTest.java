@@ -100,6 +100,7 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.collect.LinkedListMultimap;
 import com.google.common.collect.Multimap;
 
+import org.hamcrest.Matcher;
 import org.hsqldb.jdbcDriver;
 
 import org.junit.Ignore;
@@ -116,12 +117,14 @@ import java.sql.DatabaseMetaData;
 import java.sql.Date;
 import java.sql.DriverManager;
 import java.sql.DriverPropertyInfo;
+import java.sql.ParameterMetaData;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.sql.Timestamp;
+import java.sql.Types;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Calendar;
@@ -722,6 +725,24 @@ public class JdbcTest {
     assertTrue(connection.isClosed());
   }
 
+  /** Test case for
+   * <a href="https://issues.apache.org/jira/browse/CALCITE-2071">[CALCITE-2071]
+   * Query with IN and OR in WHERE clause returns wrong result</a>.
+   * More cases in sub-query.iq. */
+  @Test public void testWhereInOr() {
+    final String sql = "select \"empid\"\n"
+        + "from \"hr\".\"emps\" t\n"
+        + "where (\"empid\" in (select \"empid\" from \"hr\".\"emps\")\n"
+        + "    or \"empid\" in (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11,\n"
+        + "        12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25))\n"
+        + "and \"empid\" in (100, 200, 150)";
+    CalciteAssert.hr()
+        .query(sql)
+        .returnsUnordered("empid=100",
+            "empid=200",
+            "empid=150");
+  }
+
   /** Tests that a driver can be extended with its own parser and can execute
    * its own flavor of DDL. */
   @Test public void testMockDdl() throws Exception {
@@ -730,7 +751,7 @@ public class JdbcTest {
              driver.connect("jdbc:calcite:", new Properties());
         Statement statement = connection.createStatement()) {
       assertThat(driver.counter, is(0));
-      statement.executeQuery("COMMIT");
+      statement.executeUpdate("COMMIT");
       assertThat(driver.counter, is(1));
     }
   }
@@ -1537,7 +1558,34 @@ public class JdbcTest {
         .with(CalciteAssert.Config.JDBC_FOODMART)
         .query("select extract(month from interval '2-3' year to month) as c \n"
             + "from \"foodmart\".\"employee\" where \"employee_id\"=1")
+        // disable for MySQL, H2; cannot handle EXTRACT yet
+        .enable(CalciteAssert.DB != CalciteAssert.DatabaseInstance.MYSQL
+            && CalciteAssert.DB != CalciteAssert.DatabaseInstance.H2)
         .returns("C=3\n");
+  }
+
+  /** Test case for
+   * <a href="https://issues.apache.org/jira/browse/CALCITE-1188">[CALCITE-1188]
+   * NullPointerException when EXTRACT is applied to NULL date field</a>.
+   * The problem occurs when EXTRACT appears in both SELECT and WHERE ... IN
+   * clauses, the latter with at least two values. */
+  @Test public void testExtractOnNullDateField() {
+    final String sql = "select\n"
+        + "  extract(year from \"end_date\"), \"hire_date\", \"birth_date\"\n"
+        + "from \"foodmart\".\"employee\"\n"
+        + "where extract(year from \"end_date\") in (1994, 1995, 1996)\n"
+        + "group by\n"
+        + "  extract(year from \"end_date\"), \"hire_date\", \"birth_date\"\n";
+    final String sql2 = sql + "\n"
+        + "limit 10000";
+    final String sql3 = "select *\n"
+        + "from \"foodmart\".\"employee\"\n"
+        + "where extract(year from \"end_date\") in (1994, 1995, 1996)";
+    final CalciteAssert.AssertThat with = CalciteAssert.that()
+        .with(CalciteAssert.Config.FOODMART_CLONE);
+    with.query(sql).returns("");
+    with.query(sql2).returns("");
+    with.query(sql3).returns("");
   }
 
   @Test public void testFloorDate() {
@@ -1545,6 +1593,10 @@ public class JdbcTest {
         .with(CalciteAssert.Config.JDBC_FOODMART)
         .query("select floor(timestamp '2011-9-14 19:27:23' to month) as c \n"
             + "from \"foodmart\".\"employee\" limit 1")
+        // disable for MySQL; birth_date suffers timezone shift
+        // disable for H2; Calcite generates incorrect FLOOR syntax
+        .enable(CalciteAssert.DB != CalciteAssert.DatabaseInstance.MYSQL
+            && CalciteAssert.DB != CalciteAssert.DatabaseInstance.H2)
         .returns("C=2011-09-01 00:00:00\n");
   }
 
@@ -1584,6 +1636,8 @@ public class JdbcTest {
             + "  from \"foodmart\".\"employee\" as e1\n"
             + "  join \"foodmart\".\"employee\" as e2 on e1.\"first_name\" = e2.\"last_name\"\n"
             + "order by e1.\"last_name\" limit 3")
+        // disable for H2; gives "Unexpected code path" internal error
+        .enable(CalciteAssert.DB != CalciteAssert.DatabaseInstance.H2)
         .returns("full_name=James Aguilar\n"
             + "full_name=Carol Amyotte\n"
             + "full_name=Terry Anderson\n");
@@ -2329,6 +2383,8 @@ public class JdbcTest {
         .with(config)
         .query(
             "select \"hire_date\", \"end_date\", \"birth_date\" from \"foodmart\".\"employee\" where \"employee_id\" = 1")
+        // disable for MySQL; birth_date suffers timezone shift
+        .enable(CalciteAssert.DB != CalciteAssert.DatabaseInstance.MYSQL)
         .returns2(
             "hire_date=1994-12-01; end_date=null; birth_date=1961-08-26\n");
   }
@@ -4889,6 +4945,44 @@ public class JdbcTest {
             });
   }
 
+  /** Test case for
+   * <a href="https://issues.apache.org/jira/browse/CALCITE-2061">[CALCITE-2061]
+   * Dynamic parameters in offset/fetch</a>. */
+  @Test public void testPreparedOffsetFetch() throws Exception {
+    checkPreparedOffsetFetch(0, 0, Matchers.returnsUnordered());
+    checkPreparedOffsetFetch(100, 4, Matchers.returnsUnordered());
+    checkPreparedOffsetFetch(3, 4,
+        Matchers.returnsUnordered("name=Eric"));
+  }
+
+  private void checkPreparedOffsetFetch(final int offset, final int fetch,
+      final Matcher<? super ResultSet> matcher) throws Exception {
+    CalciteAssert.hr()
+        .doWithConnection(
+            new Function<CalciteConnection, Object>() {
+              public Object apply(CalciteConnection connection) {
+                final String sql = "select \"name\"\n"
+                    + "from \"hr\".\"emps\"\n"
+                    + "order by \"empid\" offset ? fetch next ? rows only";
+                try (final PreparedStatement p =
+                         connection.prepareStatement(sql)) {
+                  final ParameterMetaData pmd = p.getParameterMetaData();
+                  assertThat(pmd.getParameterCount(), is(2));
+                  assertThat(pmd.getParameterType(1), is(Types.INTEGER));
+                  assertThat(pmd.getParameterType(2), is(Types.INTEGER));
+                  p.setInt(1, offset);
+                  p.setInt(2, fetch);
+                  try (final ResultSet r = p.executeQuery()) {
+                    assertThat(r, matcher);
+                    return null;
+                  }
+                } catch (SQLException e) {
+                  throw new RuntimeException(e);
+                }
+              }
+            });
+  }
+
   /** Tests a JDBC connection that provides a model (a single schema based on
    * a JDBC database). */
   @Test public void testModel() {
@@ -6116,6 +6210,24 @@ public class JdbcTest {
         .throws_("No match found for function signature NVL(<NUMERIC>, <NUMERIC>)");
   }
 
+  /** Test case for
+   * <a href="https://issues.apache.org/jira/browse/CALCITE-2072">[CALCITE-2072]
+   * Enable spatial operator table by adding 'fun=spatial'to JDBC URL</a>. */
+  @Test public void testFunSpatial() {
+    final String sql = "select distinct\n"
+        + "  ST_PointFromText('POINT(-71.0642.28)') as c\n"
+        + "from \"hr\".\"emps\"";
+    CalciteAssert.that(CalciteAssert.Config.REGULAR)
+        .with("fun", "spatial")
+        .query(sql)
+        .returnsUnordered("C={\"x\":-71.0642,\"y\":0.28}");
+
+    // NVL is present in the Oracle operator table, but not spatial or core
+    CalciteAssert.that(CalciteAssert.Config.REGULAR)
+        .query("select nvl(\"commission\", -99) as c from \"hr\".\"emps\"")
+        .throws_("No match found for function signature NVL(<NUMERIC>, <NUMERIC>)");
+  }
+
   /** Tests that {@link Hook#PARSE_TREE} works. */
   @Test public void testHook() {
     final int[] callCount = {0};
@@ -6485,6 +6597,76 @@ public class JdbcTest {
     rs.close();
     calciteConnection.close();
 
+  }
+
+  /**
+   * Test case for
+   * <a href="https://issues.apache.org/jira/browse/CALCITE-2054">[CALCITE-2054]
+   * Error while validating UPDATE with dynamic parameter in SET clause</a>.
+   */
+  @Test public void testUpdateBind() throws Exception {
+    String hsqldbMemUrl = "jdbc:hsqldb:mem:.";
+    try (Connection baseConnection = DriverManager.getConnection(hsqldbMemUrl);
+         Statement baseStmt = baseConnection.createStatement()) {
+      baseStmt.execute("CREATE TABLE T2 (\n"
+          + "ID INTEGER,\n"
+          + "VALS DOUBLE)");
+      baseStmt.execute("INSERT INTO T2 VALUES (1, 1.0)");
+      baseStmt.execute("INSERT INTO T2 VALUES (2, null)");
+      baseStmt.execute("INSERT INTO T2 VALUES (null, 2.0)");
+
+      baseStmt.close();
+      baseConnection.commit();
+
+      Properties info = new Properties();
+      final String model = "inline:"
+          + "{\n"
+          + "  version: '1.0',\n"
+          + "  defaultSchema: 'BASEJDBC',\n"
+          + "  schemas: [\n"
+          + "     {\n"
+          + "       type: 'jdbc',\n"
+          + "       name: 'BASEJDBC',\n"
+          + "       jdbcDriver: '" + jdbcDriver.class.getName() + "',\n"
+          + "       jdbcUrl: '" + hsqldbMemUrl + "',\n"
+          + "       jdbcCatalog: null,\n"
+          + "       jdbcSchema: null\n"
+          + "     }\n"
+          + "  ]\n"
+          + "}";
+      info.put("model", model);
+
+      Connection calciteConnection =
+          DriverManager.getConnection("jdbc:calcite:", info);
+
+      ResultSet rs = calciteConnection.prepareStatement("select * from t2")
+          .executeQuery();
+
+      assertThat(rs.next(), is(true));
+      assertThat((Integer) rs.getObject("ID"), is(1));
+      assertThat((Double) rs.getObject("VALS"), is(1.0));
+
+      assertThat(rs.next(), is(true));
+      assertThat((Integer) rs.getObject("ID"), is(2));
+      assertThat(rs.getObject("VALS"), nullValue());
+
+      assertThat(rs.next(), is(true));
+      assertThat(rs.getObject("ID"), nullValue());
+      assertThat((Double) rs.getObject("VALS"), equalTo(2.0));
+
+      rs.close();
+
+      final String sql = "update t2 set vals=? where id=?";
+      try (PreparedStatement ps =
+               calciteConnection.prepareStatement(sql)) {
+        ParameterMetaData pmd = ps.getParameterMetaData();
+        assertThat(pmd.getParameterCount(), is(2));
+        assertThat(pmd.getParameterType(1), is(Types.DOUBLE));
+        assertThat(pmd.getParameterType(2), is(Types.INTEGER));
+        ps.close();
+      }
+      calciteConnection.close();
+    }
   }
 
   /** Test case for

@@ -301,9 +301,41 @@ public class SqlToRelConverterTest extends SqlToRelTestBase {
   }
 
   @Test public void testGroupingSets() {
-    sql("select deptno, ename, sum(sal) from emp\n"
+    final String sql = "select deptno, ename, sum(sal) from emp\n"
         + "group by grouping sets ((deptno), (ename, deptno))\n"
-        + "order by 2").ok();
+        + "order by 2";
+    sql(sql).ok();
+  }
+
+  /** Test case for
+   * <a href="https://issues.apache.org/jira/browse/CALCITE-2147">[CALCITE-2147]
+   * Incorrect plan in with with ROLLUP inside GROUPING SETS</a>.
+   *
+   * <p>Equivalence example:
+   * <blockquote>GROUP BY GROUPING SETS (ROLLUP(A, B), CUBE(C,D))</blockquote>
+   * <p>is equal to
+   * <blockquote>GROUP BY GROUPING SETS ((A,B), (A), (),
+   * (C,D), (C), (D) )</blockquote>
+   */
+  @Test public void testGroupingSetsWithRollup() {
+    final String sql = "select deptno, ename, sum(sal) from emp\n"
+        + "group by grouping sets ( rollup(deptno), (ename, deptno))\n"
+        + "order by 2";
+    sql(sql).ok();
+  }
+
+  @Test public void testGroupingSetsWithCube() {
+    final String sql = "select deptno, ename, sum(sal) from emp\n"
+        + "group by grouping sets ( (deptno), CUBE(ename, deptno))\n"
+        + "order by 2";
+    sql(sql).ok();
+  }
+
+  @Test public void testGroupingSetsWithRollupCube() {
+    final String sql = "select deptno, ename, sum(sal) from emp\n"
+        + "group by grouping sets ( CUBE(deptno), ROLLUP(ename, deptno))\n"
+        + "order by 2";
+    sql(sql).ok();
   }
 
   @Test public void testGroupingSetsProduct() {
@@ -541,6 +573,21 @@ public class SqlToRelConverterTest extends SqlToRelTestBase {
   @Test public void testOrder() {
     final String sql = "select empno from emp order by empno";
     sql(sql).ok();
+
+    // duplicate field is dropped, so plan is same
+    final String sql2 = "select empno from emp order by empno, empno asc";
+    sql(sql2).ok();
+
+    // ditto
+    final String sql3 = "select empno from emp order by empno, empno desc";
+    sql(sql3).ok();
+  }
+
+  /** Tests that if a column occurs twice in ORDER BY, only the first key is
+   * kept. */
+  @Test public void testOrderBasedRepeatFields() {
+    final String sql = "select empno from emp order by empno DESC, empno ASC";
+    sql(sql).ok();
   }
 
   @Test public void testOrderDescNullsLast() {
@@ -632,7 +679,7 @@ public class SqlToRelConverterTest extends SqlToRelTestBase {
 
   @Test public void testOrderBySameExpr() {
     final String sql = "select empno from emp, dept\n"
-        + "order by sal + empno desc, sal * empno, sal + empno";
+        + "order by sal + empno desc, sal * empno, sal + empno desc";
     sql(sql).ok();
   }
 
@@ -669,9 +716,21 @@ public class SqlToRelConverterTest extends SqlToRelTestBase {
     sql(sql).ok();
   }
 
+  @Test public void testOrderOffsetFetchWithDynamicParameter() {
+    final String sql = "select empno from emp\n"
+        + "order by empno offset ? rows fetch next ? rows only";
+    sql(sql).ok();
+  }
+
   @Test public void testOffsetFetch() {
     final String sql = "select empno from emp\n"
         + "offset 10 rows fetch next 5 rows only";
+    sql(sql).ok();
+  }
+
+  @Test public void testOffsetFetchWithDynamicParameter() {
+    final String sql = "select empno from emp\n"
+        + "offset ? rows fetch next ? rows only";
     sql(sql).ok();
   }
 
@@ -680,8 +739,18 @@ public class SqlToRelConverterTest extends SqlToRelTestBase {
     sql(sql).ok();
   }
 
+  @Test public void testOffsetWithDynamicParameter() {
+    final String sql = "select empno from emp offset ? rows";
+    sql(sql).ok();
+  }
+
   @Test public void testFetch() {
     final String sql = "select empno from emp fetch next 5 rows only";
+    sql(sql).ok();
+  }
+
+  @Test public void testFetchWithDynamicParameter() {
+    final String sql = "select empno from emp fetch next ? rows only";
     sql(sql).ok();
   }
 
@@ -1031,6 +1100,10 @@ public class SqlToRelConverterTest extends SqlToRelTestBase {
   @Test public void testUnnestSubQuery() {
     final String sql = "select*from unnest(multiset(select*from dept))";
     sql(sql).ok();
+  }
+
+  @Test public void testArrayOfRecord() {
+    sql("select employees[1].skills[2+3].desc from dept_nested").ok();
   }
 
   @Test public void testUnnestArray() {
@@ -1915,6 +1988,12 @@ public class SqlToRelConverterTest extends SqlToRelTestBase {
     sql(sql).ok();
   }
 
+  @Test public void testUpdateBind2() {
+    final String sql = "update emp"
+        + " set sal = ? where slacker = false";
+    sql(sql).ok();
+  }
+
   @Ignore("CALCITE-1708")
   @Test public void testUpdateBindExtendedColumn() {
     final String sql = "update emp(test INT)"
@@ -2339,6 +2418,19 @@ public class SqlToRelConverterTest extends SqlToRelTestBase {
     sql(sql).with(getTesterWithDynamicTable()).ok();
   }
 
+  /** Test case for
+   * <a href="https://issues.apache.org/jira/browse/CALCITE-2080">[CALCITE-2080]
+   * Query with NOT IN operator and literal fails throws AssertionError: 'Cast
+   * for just nullability not allowed'</a>. */
+  @Test public void testNotInWithLiteral() {
+    final String sql = "SELECT *\n"
+        + "FROM SALES.NATION\n"
+        + "WHERE n_name NOT IN\n"
+        + "    (SELECT ''\n"
+        + "     FROM SALES.NATION)";
+    sql(sql).with(getTesterWithDynamicTable()).ok();
+  }
+
   /**
    * Test case for Dynamic Table / Dynamic Star support
    * <a href="https://issues.apache.org/jira/browse/CALCITE-1150">[CALCITE-1150]</a>
@@ -2538,27 +2630,24 @@ public class SqlToRelConverterTest extends SqlToRelTestBase {
         + "    pattern (strt down+ up+)\n"
         + "    define\n"
         + "      down as down.mgr < PREV(down.mgr),\n"
-        + "      up as up.mgr > prev(up.mgr)\n"
-        + "  ) mr";
+        + "      up as up.mgr > prev(up.mgr)) as mr";
     sql(sql).ok();
   }
 
   @Test public void testMatchRecognizeMeasures1() {
     final String sql = "select *\n"
-        + "  from emp match_recognize\n"
-        + "  (\n"
-        + "   partition by job, sal\n"
-        + "   order by job asc, sal desc\n"
-        + "   measures  MATCH_NUMBER() as match_num, "
-        + "   CLASSIFIER() as var_match, "
-        + "   STRT.mgr as start_nw,"
-        + "   LAST(DOWN.mgr) as bottom_nw,"
-        + "   LAST(up.mgr) as end_nw"
-        + "    pattern (strt down+ up+)\n"
-        + "    define\n"
-        + "      down as down.mgr < PREV(down.mgr),\n"
-        + "      up as up.mgr > prev(up.mgr)\n"
-        + "  ) mr";
+        + "from emp match_recognize (\n"
+        + "  partition by job, sal\n"
+        + "  order by job asc, sal desc\n"
+        + "  measures MATCH_NUMBER() as match_num,\n"
+        + "    CLASSIFIER() as var_match,\n"
+        + "    STRT.mgr as start_nw,\n"
+        + "    LAST(DOWN.mgr) as bottom_nw,\n"
+        + "    LAST(up.mgr) as end_nw\n"
+        + "  pattern (strt down+ up+)\n"
+        + "  define\n"
+        + "    down as down.mgr < PREV(down.mgr),\n"
+        + "    up as up.mgr > prev(up.mgr)) as mr";
     sql(sql).ok();
   }
 
@@ -2568,40 +2657,36 @@ public class SqlToRelConverterTest extends SqlToRelTestBase {
    * columns</a>. */
   @Test public void testMatchRecognizeMeasures2() {
     final String sql = "select *\n"
-        + "  from emp match_recognize\n"
-        + "  (\n"
-        + "   partition by job\n"
-        + "   order by sal\n"
-        + "   measures  MATCH_NUMBER() as match_num, "
-        + "   CLASSIFIER() as var_match, "
-        + "   STRT.mgr as start_nw,"
-        + "   LAST(DOWN.mgr) as bottom_nw,"
-        + "   LAST(up.mgr) as end_nw"
-        + "    pattern (strt down+ up+)\n"
-        + "    define\n"
-        + "      down as down.mgr < PREV(down.mgr),\n"
-        + "      up as up.mgr > prev(up.mgr)\n"
-        + "  ) mr";
+        + "from emp match_recognize (\n"
+        + "  partition by job\n"
+        + "  order by sal\n"
+        + "  measures MATCH_NUMBER() as match_num,\n"
+        + "    CLASSIFIER() as var_match,\n"
+        + "    STRT.mgr as start_nw,\n"
+        + "    LAST(DOWN.mgr) as bottom_nw,\n"
+        + "    LAST(up.mgr) as end_nw\n"
+        + "  pattern (strt down+ up+)\n"
+        + "  define\n"
+        + "    down as down.mgr < PREV(down.mgr),\n"
+        + "    up as up.mgr > prev(up.mgr)) as mr";
     sql(sql).ok();
   }
 
   @Test public void testMatchRecognizeMeasures3() {
     final String sql = "select *\n"
-        + "  from emp match_recognize\n"
-        + "  (\n"
-        + "   partition by job\n"
-        + "   order by sal\n"
-        + "   measures  MATCH_NUMBER() as match_num, "
-        + "   CLASSIFIER() as var_match, "
-        + "   STRT.mgr as start_nw,"
-        + "   LAST(DOWN.mgr) as bottom_nw,"
-        + "   LAST(up.mgr) as end_nw"
-        + "   ALL ROWS PER MATCH"
-        + "    pattern (strt down+ up+)\n"
-        + "    define\n"
-        + "      down as down.mgr < PREV(down.mgr),\n"
-        + "      up as up.mgr > prev(up.mgr)\n"
-        + "  ) mr";
+        + "from emp match_recognize (\n"
+        + "  partition by job\n"
+        + "  order by sal\n"
+        + "  measures MATCH_NUMBER() as match_num,\n"
+        + "    CLASSIFIER() as var_match,\n"
+        + "    STRT.mgr as start_nw,\n"
+        + "    LAST(DOWN.mgr) as bottom_nw,\n"
+        + "    LAST(up.mgr) as end_nw\n"
+        + "  ALL ROWS PER MATCH\n"
+        + "  pattern (strt down+ up+)\n"
+        + "  define\n"
+        + "    down as down.mgr < PREV(down.mgr),\n"
+        + "    up as up.mgr > prev(up.mgr)) as mr";
     sql(sql).ok();
   }
 

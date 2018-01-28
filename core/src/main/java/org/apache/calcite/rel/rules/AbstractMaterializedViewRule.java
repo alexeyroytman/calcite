@@ -746,7 +746,11 @@ public abstract class AbstractMaterializedViewRule extends RelOptRule {
           return null;
         }
         assert s.size() == 1;
-        exprsLineage.add(s.iterator().next());
+        // Rewrite expr. Take first element from the corresponding equivalence class
+        // (no need to swap the table references following the table mapping)
+        exprsLineage.add(
+            RexUtil.swapColumnReferences(rexBuilder,
+                s.iterator().next(), queryEC.getEquivalenceClassesMap()));
       }
       List<RexNode> viewExprs = topViewProject == null
           ? extractReferences(rexBuilder, viewNode)
@@ -1048,16 +1052,22 @@ public abstract class AbstractMaterializedViewRule extends RelOptRule {
         aggregateCalls.add(
             relBuilder.aggregateCall(
                 SubstitutionVisitor.getRollup(aggCall.getAggregation()),
-                aggCall.isDistinct(),
-                null,
+                aggCall.isDistinct(), aggCall.isApproximate(), null,
                 aggCall.name,
-                ImmutableList.of(
-                    rexBuilder.makeInputRef(
-                        relBuilder.peek(), aggregate.getGroupCount() + i))));
+                rexBuilder.makeInputRef(relBuilder.peek(),
+                    aggregate.getGroupCount() + i)));
       }
+      RelNode prevNode = relBuilder.peek();
       RelNode result = relBuilder
           .aggregate(relBuilder.groupKey(groupSet, null), aggregateCalls)
           .build();
+      if (prevNode == result && groupSet.cardinality() != result.getRowType().getFieldCount()) {
+        // Aggregate was not inserted but we need to prune columns
+        result = relBuilder
+            .push(result)
+            .project(relBuilder.fields(groupSet.asList()))
+            .build();
+      }
       if (topProject != null) {
         // Top project
         return topProject.copy(topProject.getTraitSet(), ImmutableList.of(result));
@@ -1251,10 +1261,9 @@ public abstract class AbstractMaterializedViewRule extends RelOptRule {
                 aggregateCalls.add(
                     relBuilder.aggregateCall(
                         SubstitutionVisitor.getRollup(queryAggCall.getAggregation()),
-                        queryAggCall.isDistinct(),
-                        null,
-                        queryAggCall.name,
-                        ImmutableList.of(rexBuilder.makeInputRef(input, k))));
+                        queryAggCall.isDistinct(), queryAggCall.isApproximate(),
+                        null, queryAggCall.name,
+                        rexBuilder.makeInputRef(input, k)));
                 rewritingMapping.set(k, sourceIdx);
                 added = true;
                 break;
@@ -1268,17 +1277,24 @@ public abstract class AbstractMaterializedViewRule extends RelOptRule {
             aggregateCalls.add(
                 relBuilder.aggregateCall(
                     SubstitutionVisitor.getRollup(queryAggCall.getAggregation()),
-                    queryAggCall.isDistinct(),
-                    null,
-                    queryAggCall.name,
-                    ImmutableList.of(rexBuilder.makeInputRef(input, targetIdx))));
+                    queryAggCall.isDistinct(), queryAggCall.isApproximate(),
+                    null, queryAggCall.name,
+                    rexBuilder.makeInputRef(input, targetIdx)));
             rewritingMapping.set(targetIdx, sourceIdx);
           }
         }
+        RelNode prevNode = result;
         result = relBuilder
             .push(result)
             .aggregate(relBuilder.groupKey(groupSet, null), aggregateCalls)
             .build();
+        if (prevNode == result && groupSet.cardinality() != result.getRowType().getFieldCount()) {
+          // Aggregate was not inserted but we need to prune columns
+          result = relBuilder
+              .push(result)
+              .project(relBuilder.fields(groupSet.asList()))
+              .build();
+        }
         // We introduce a project on top, as group by columns order is lost
         List<RexNode> projects = new ArrayList<>();
         Mapping inverseMapping = rewritingMapping.inverse();

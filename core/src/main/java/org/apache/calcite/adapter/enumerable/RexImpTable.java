@@ -935,15 +935,33 @@ public class RexImpTable {
   }
 
   private static Expression implementCall(
-      RexToLixTranslator translator,
+      final RexToLixTranslator translator,
       RexCall call,
       NotNullImplementor implementor,
-      NullAs nullAs) {
-    final List<Expression> translatedOperands =
+      final NullAs nullAs) {
+    List<Expression> translatedOperands =
         translator.translateList(call.getOperands());
+    // Make sure the operands marked not null in the translator have all been
+    // handled for nulls before being passed to the NotNullImplementor.
+    if (nullAs == NullAs.NOT_POSSIBLE) {
+      List<Expression> nullHandled = translatedOperands;
+      for (int i = 0; i < translatedOperands.size(); i++) {
+        RexNode arg = call.getOperands().get(i);
+        Expression e = translatedOperands.get(i);
+        if (!translator.isNullable(arg)) {
+          if (nullHandled == translatedOperands) {
+            nullHandled = new ArrayList<>(translatedOperands.subList(0, i));
+          }
+          nullHandled.add(translator.handleNull(e, nullAs));
+        } else if (nullHandled != translatedOperands) {
+          nullHandled.add(e);
+        }
+      }
+      translatedOperands = nullHandled;
+    }
     Expression result =
         implementor.implement(translator, call, translatedOperands);
-    return nullAs.handle(result);
+    return translator.handleNull(result, nullAs);
   }
 
   /** Strategy what an operator should return if one of its

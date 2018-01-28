@@ -548,9 +548,13 @@ public class CalciteAssert {
         calciteConnection.getProperties().setProperty(
             CalciteConnectionProperty.CREATE_MATERIALIZATIONS.camelName(),
             Boolean.toString(materializationsEnabled));
-        calciteConnection.getProperties().setProperty(
-            CalciteConnectionProperty.TIME_ZONE.camelName(),
-            DateTimeUtils.UTC_ZONE.getID());
+        if (!calciteConnection.getProperties()
+            .containsKey(CalciteConnectionProperty.TIME_ZONE.camelName())) {
+          // Do not override id some test has already set this property.
+          calciteConnection.getProperties().setProperty(
+              CalciteConnectionProperty.TIME_ZONE.camelName(),
+              DateTimeUtils.UTC_ZONE.getID());
+        }
       }
       for (Pair<Hook, Function> hook : hooks) {
         closer.add(hook.left.addThread(hook.right));
@@ -853,6 +857,11 @@ public class CalciteAssert {
   static <F, T> Function<F, T> constantNull() {
     //noinspection unchecked
     return (Function<F, T>) (Function) Functions.<T>constant(null);
+  }
+
+  /** Returns a {@link PropBuilder}. */
+  static PropBuilder propBuilder() {
+    return new PropBuilder();
   }
 
   /**
@@ -1338,6 +1347,7 @@ public class CalciteAssert {
             hooks, checker, null, null);
         return this;
       } catch (Exception e) {
+        e.printStackTrace();
         throw new RuntimeException(
             "exception while executing [" + sql + "]", e);
       }
@@ -1848,6 +1858,21 @@ public class CalciteAssert {
       String s = buf.toString();
       buf.setLength(0);
       return s;
+    }
+  }
+
+  /** Builds a {@link java.util.Properties} containing connection property
+   * settings. */
+  static class PropBuilder {
+    final Properties properties = new Properties();
+
+    PropBuilder set(CalciteConnectionProperty p, String v) {
+      properties.setProperty(p.camelName(), v);
+      return this;
+    }
+
+    Properties build() {
+      return properties;
     }
   }
 }

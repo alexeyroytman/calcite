@@ -251,6 +251,9 @@ in those same conformance levels, any *column* in *insert* may be replaced by
 In *orderItem*, if *expression* is a positive integer *n*, it denotes
 the <em>n</em>th item in the SELECT clause.
 
+In *query*, *count* and *start* may each be either an unsigned integer literal
+or a dynamic parameter whose value is an integer.
+
 An aggregate query is a query that contains a GROUP BY or a HAVING
 clause, or aggregate functions in the SELECT clause. In the SELECT,
 HAVING and ORDER BY clauses of an aggregate query, all expressions
@@ -1480,6 +1483,7 @@ passed to the aggregate function.
 | COLLECT( [ ALL &#124; DISTINCT ] value)       | Returns a multiset of the values
 | COUNT( [ ALL &#124; DISTINCT ] value [, value ]*) | Returns the number of input rows for which *value* is not null (wholly not null if *value* is composite)
 | COUNT(*)                           | Returns the number of input rows
+| APPROX_COUNT_DISTINCT(value [, value ]*)      | Returns the approximate number of distinct values of *value*; the database is allowed to use an approximation but is not required to
 | AVG( [ ALL &#124; DISTINCT ] numeric)         | Returns the average (arithmetic mean) of *numeric* across all input values
 | SUM( [ ALL &#124; DISTINCT ] numeric)         | Returns the sum of *numeric* across all input values
 | MAX( [ ALL &#124; DISTINCT ] value)           | Returns the maximum value of *value* across all input values
@@ -1507,7 +1511,7 @@ Not implemented:
 
 | Operator syntax                           | Description
 |:----------------------------------------- |:-----------
-| COUNT(value [, value ]*) OVER window     | Returns the number of rows in *window* for which *value* is not null (wholly not null if *value* is composite)
+| COUNT(value [, value ]*) OVER window      | Returns the number of rows in *window* for which *value* is not null (wholly not null if *value* is composite)
 | COUNT(*) OVER window                      | Returns the number of rows in *window*
 | AVG(numeric) OVER window                  | Returns the average (arithmetic mean) of *numeric* across all values in *window*
 | SUM(numeric) OVER window                  | Returns the sum of *numeric* across all values in *window*
@@ -1524,7 +1528,8 @@ Not implemented:
 
 Not implemented:
 
-* COUNT(DISTINCT value) OVER window
+* COUNT(DISTINCT value [, value ]*) OVER window
+* APPROX_COUNT_DISTINCT(value [, value ]*) OVER window
 * FIRST_VALUE(value) IGNORE NULLS OVER window
 * LAST_VALUE(value) IGNORE NULLS OVER window
 * PERCENT_RANK(value) OVER window
@@ -2033,7 +2038,7 @@ measureColumn:
       expression AS alias
 
 pattern:
-      patternTerm ['|' patternTerm ]*
+      patternTerm [ '|' patternTerm ]*
 
 patternTerm:
       patternFactor [ patternFactor ]*
@@ -2065,3 +2070,98 @@ intervalLiteral:
 
 In *patternQuantifier*, *repeat* is a positive integer,
 and *minRepeat* and *maxRepeat* are non-negative integers.
+
+### DDL Extensions
+
+DDL extensions are only available in the calcite-server module.
+To enable, include `calcite-server.jar` in your class path, and add
+`parserFactory=org.apache.calcite.sql.parser.ddl.SqlDdlParserImpl#FACTORY`
+to the JDBC connect string (see connect string property
+[parserFactory]({{ site.apiRoot }}/org/apache/calcite/config/CalciteConnectionProperty.html#PARSER_FACTORY)).
+
+{% highlight sql %}
+ddlStatement:
+      createSchemaStatement
+  |   createForeignSchemaStatement
+  |   createTableStatement
+  |   createViewStatement
+  |   createMaterializedViewStatement
+  |   dropSchemaStatement
+  |   dropForeignSchemaStatement
+  |   dropTableStatement
+  |   dropViewStatement
+  |   dropMaterializedViewStatement
+
+createSchemaStatement:
+      CREATE [ OR REPLACE ] SCHEMA [ IF NOT EXISTS ] name
+
+createForeignSchemaStatement:
+      CREATE [ OR REPLACE ] FOREIGN SCHEMA [ IF NOT EXISTS ] name
+      (
+          TYPE 'type'
+      |   LIBRARY 'com.example.calcite.ExampleSchemaFactory'
+      )
+      [ OPTIONS '(' option [, option ]* ')' ]
+
+option:
+      name literal
+
+createTableStatement:
+      CREATE TABLE [ IF NOT EXISTS ] name
+      [ '(' tableElement [, tableElement ]* ')' ]
+      [ AS query ]
+
+tableElement:
+      columnName type [ columnGenerator ] [ columnConstraint ]
+  |   columnName
+  |   tableConstraint
+
+columnGenerator:
+      DEFAULT expression
+  |   [ GENERATED ALWAYS ] AS '(' expression ')'
+      { VIRTUAL | STORED }
+
+columnConstraint:
+      [ CONSTRAINT name ]
+      [ NOT ] NULL
+
+tableConstraint:
+      [ CONSTRAINT name ]
+      {
+          CHECK '(' expression ')'
+      |   PRIMARY KEY '(' columnName [, columnName ]* ')'
+      |   UNIQUE '(' columnName [, columnName ]* ')'
+      }
+
+createViewStatement:
+      CREATE [ OR REPLACE ] VIEW name
+      [ '(' columnName [, columnName ]* ')' ]
+      AS query
+
+createMaterializedViewStatement:
+      CREATE MATERIALIZED VIEW [ IF NOT EXISTS ] name
+      [ '(' columnName [, columnName ]* ')' ]
+      AS query
+
+dropSchemaStatement:
+      DROP SCHEMA name [ IF EXISTS ]
+
+dropForeignSchemaStatement:
+      DROP FOREIGN SCHEMA name [ IF EXISTS ]
+
+dropTableStatement:
+      DROP TABLE name [ IF EXISTS ]
+
+dropViewStatement:
+      DROP VIEW name [ IF EXISTS ]
+
+dropMaterializedViewStatement:
+      DROP MATERIALIZED VIEW name [ IF EXISTS ]
+{% endhighlight %}
+
+In *createTableStatement*, if you specify *AS query*, you may omit the list of
+*tableElement*s, or you can omit the data type of any *tableElement*, in which
+case it just renames the underlying column.
+
+In *columnGenerator*, if you do not specify `VIRTUAL` or `STORED` for a
+generated column, `VIRTUAL` is the default.

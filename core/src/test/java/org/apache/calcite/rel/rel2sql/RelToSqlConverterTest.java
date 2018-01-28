@@ -592,7 +592,7 @@ public class RelToSqlConverterTest {
         + "AND ? >= \"shelf_width\"";
     final String expected = "SELECT *\n"
         + "FROM \"foodmart\".\"product\"\n"
-        + "WHERE \"product_id\" = ?"
+        + "WHERE \"product_id\" = ? "
         + "AND ? >= \"shelf_width\"";
     sql(query).ok(expected);
   }
@@ -2259,6 +2259,56 @@ public class RelToSqlConverterTest {
         .ok(expectedPostgresql)
         .withOracle()
         .ok(expectedOracle);
+  }
+
+  /** Test case for
+   * <a href="https://issues.apache.org/jira/browse/CALCITE-2118">[CALCITE-2118]
+   * RelToSqlConverter should only generate "*" if field names match</a>. */
+  @Test public void testPreserveAlias() {
+    final String sql = "select \"warehouse_class_id\" as \"id\",\n"
+        + " \"description\"\n"
+        + "from \"warehouse_class\"";
+    final String expected = ""
+        + "SELECT \"warehouse_class_id\" AS \"id\", \"description\"\n"
+        + "FROM \"foodmart\".\"warehouse_class\"";
+    sql(sql).ok(expected);
+
+    final String sql2 = "select \"warehouse_class_id\", \"description\"\n"
+        + "from \"warehouse_class\"";
+    final String expected2 = "SELECT *\n"
+        + "FROM \"foodmart\".\"warehouse_class\"";
+    sql(sql2).ok(expected2);
+  }
+
+  @Test public void testPreservePermutation() {
+    final String sql = "select \"description\", \"warehouse_class_id\"\n"
+        + "from \"warehouse_class\"";
+    final String expected = "SELECT \"description\", \"warehouse_class_id\"\n"
+        + "FROM \"foodmart\".\"warehouse_class\"";
+    sql(sql).ok(expected);
+  }
+
+  @Test public void testFieldNamesWithAggregateSubQuery() {
+    final String query = "select mytable.\"city\",\n"
+        + "  sum(mytable.\"store_sales\") as \"my-alias\"\n"
+        + "from (select c.\"city\", s.\"store_sales\"\n"
+        + "  from \"sales_fact_1997\" as s\n"
+        + "    join \"customer\" as c using (\"customer_id\")\n"
+        + "  group by c.\"city\", s.\"store_sales\") AS mytable\n"
+        + "group by mytable.\"city\"";
+
+    final String expected = "SELECT \"t0\".\"city\","
+        + " SUM(\"t0\".\"store_sales\") AS \"my-alias\"\n"
+        + "FROM (SELECT \"customer\".\"city\","
+        + " \"sales_fact_1997\".\"store_sales\"\n"
+        + "FROM \"foodmart\".\"sales_fact_1997\"\n"
+        + "INNER JOIN \"foodmart\".\"customer\""
+        + " ON \"sales_fact_1997\".\"customer_id\""
+        + " = \"customer\".\"customer_id\"\n"
+        + "GROUP BY \"customer\".\"city\","
+        + " \"sales_fact_1997\".\"store_sales\") AS \"t0\"\n"
+        + "GROUP BY \"t0\".\"city\"";
+    sql(query).ok(expected);
   }
 
   /** Fluid interface to run tests. */

@@ -31,16 +31,16 @@ adapters.
 
 ## Building from a source distribution
 
-Prerequisites are maven (3.2.1 or later)
-and Java (JDK 7, 8 or 9) on your path.
+Prerequisites are maven (3.5.2 or later)
+and Java (JDK 8, 9 or 10) on your path.
 
 Unpack the source distribution `.tar.gz` or `.zip` file,
 `cd` to the root directory of the unpacked source,
 then build using maven:
 
 {% highlight bash %}
-$ tar xvfz calcite-1.14.0-source.tar.gz
-$ cd calcite-1.14.0
+$ tar xvfz calcite-1.15.0-source.tar.gz
+$ cd calcite-1.15.0
 $ mvn install
 {% endhighlight %}
 
@@ -49,8 +49,8 @@ tests.
 
 ## Building from git
 
-Prerequisites are git, maven (3.2.1 or later)
-and Java (JDK 7 or later, 8 preferred) on your path.
+Prerequisites are git, maven (3.5.2 or later)
+and Java (JDK 8 or later, 9 preferred) on your path.
 
 Create a local copy of the github repository,
 `cd` to its root directory,
@@ -408,7 +408,7 @@ ball because that would be
 Before you start:
 
 * Set up signing keys as described above.
-* Make sure you are using JDK 8 (not 7 or 9).
+* Make sure you are using JDK 8 (not 7, 9 or 10).
 * Make sure build and tests succeed with `-Dcalcite.test.db=hsqldb` (the default)
 
 {% highlight bash %}
@@ -429,7 +429,7 @@ When the dry-run has succeeded, change `install` to `deploy`.
 Before you start:
 
 * Set up signing keys as described above.
-* Make sure you are using JDK 8 (not 7 or 9).
+* Make sure you are using JDK 8 (not 7, 9 or 10).
 * Check that `README` and `site/_docs/howto.md` have the correct version number.
 * Check that `NOTICE` has the current copyright year.
 * Set `version.major` and `version.minor` in `pom.xml`.
@@ -463,6 +463,21 @@ Before you start:
   every "resolved" JIRA case</a> (including duplicates) has
   a fix version assigned (most likely the version we are
   just about to release)
+
+Smoke-test `sqlline` with Spatial and Oracle function tables:
+
+{% highlight sql %}
+$ ./sqlline
+> !connect jdbc:calcite:fun=spatial,oracle "sa" ""
+SELECT NVL(ST_Is3D(ST_PointFromText('POINT(-71.064544 42.28787)')), TRUE);
++--------+
+| EXPR$0 |
++--------+
+| false  |
++--------+
+1 row selected (0.039 seconds)
+> !quit
+{% endhighlight %}
 
 Create a release branch named after the release, e.g. `branch-1.1`, and push it to Apache.
 

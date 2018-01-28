@@ -295,15 +295,7 @@ public class SqlStdOperatorTable extends ReflectiveSqlOperatorTable {
   /**
    * Dot operator, '<code>.</code>', used for referencing fields of records.
    */
-  public static final SqlBinaryOperator DOT =
-      new SqlBinaryOperator(
-          ".",
-          SqlKind.DOT,
-          80,
-          true,
-          null,
-          null,
-          OperandTypes.ANY_ANY);
+  public static final SqlOperator DOT = new SqlDotOperator();
 
   /**
    * Logical equals operator, '<code>=</code>'.
@@ -828,7 +820,13 @@ public class SqlStdOperatorTable extends ReflectiveSqlOperatorTable {
   /**
    * <code>COUNT</code> aggregate function.
    */
-  public static final SqlAggFunction COUNT = new SqlCountAggFunction();
+  public static final SqlAggFunction COUNT = new SqlCountAggFunction("COUNT");
+
+  /**
+   * <code>APPROX_COUNT_DISTINCT</code> aggregate function.
+   */
+  public static final SqlAggFunction APPROX_COUNT_DISTINCT =
+      new SqlCountAggFunction("APPROX_COUNT_DISTINCT");
 
   /**
    * <code>MIN</code> aggregate function.
@@ -2008,9 +2006,11 @@ public class SqlStdOperatorTable extends ReflectiveSqlOperatorTable {
 
   /** The {@code TUMBLE} group function. */
   public static final SqlGroupedWindowFunction TUMBLE =
-      new SqlGroupedWindowFunction(SqlKind.TUMBLE, null,
+      new SqlGroupedWindowFunction(SqlKind.TUMBLE.name(), SqlKind.TUMBLE,
+          null, ReturnTypes.ARG0, null,
           OperandTypes.or(OperandTypes.DATETIME_INTERVAL,
-              OperandTypes.DATETIME_INTERVAL_TIME)) {
+              OperandTypes.DATETIME_INTERVAL_TIME),
+          SqlFunctionCategory.SYSTEM) {
         @Override public List<SqlGroupedWindowFunction> getAuxiliaryFunctions() {
           return ImmutableList.of(TUMBLE_START, TUMBLE_END);
         }
@@ -2028,9 +2028,11 @@ public class SqlStdOperatorTable extends ReflectiveSqlOperatorTable {
 
   /** The {@code HOP} group function. */
   public static final SqlGroupedWindowFunction HOP =
-      new SqlGroupedWindowFunction(SqlKind.HOP, null,
+      new SqlGroupedWindowFunction(SqlKind.HOP.name(), SqlKind.HOP, null,
+          ReturnTypes.ARG0, null,
           OperandTypes.or(OperandTypes.DATETIME_INTERVAL_INTERVAL,
-              OperandTypes.DATETIME_INTERVAL_INTERVAL_TIME)) {
+              OperandTypes.DATETIME_INTERVAL_INTERVAL_TIME),
+          SqlFunctionCategory.SYSTEM) {
         @Override public List<SqlGroupedWindowFunction> getAuxiliaryFunctions() {
           return ImmutableList.of(HOP_START, HOP_END);
         }
@@ -2048,9 +2050,11 @@ public class SqlStdOperatorTable extends ReflectiveSqlOperatorTable {
 
   /** The {@code SESSION} group function. */
   public static final SqlGroupedWindowFunction SESSION =
-      new SqlGroupedWindowFunction(SqlKind.SESSION, null,
+      new SqlGroupedWindowFunction(SqlKind.SESSION.name(), SqlKind.SESSION,
+          null, ReturnTypes.ARG0, null,
           OperandTypes.or(OperandTypes.DATETIME_INTERVAL,
-              OperandTypes.DATETIME_INTERVAL_TIME)) {
+              OperandTypes.DATETIME_INTERVAL_TIME),
+          SqlFunctionCategory.SYSTEM) {
         @Override public List<SqlGroupedWindowFunction> getAuxiliaryFunctions() {
           return ImmutableList.of(SESSION_START, SESSION_END);
         }

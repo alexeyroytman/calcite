@@ -22,6 +22,7 @@ import org.apache.calcite.plan.RelOptRule;
 import org.apache.calcite.plan.RelOptRuleCall;
 import org.apache.calcite.rel.RelNode;
 import org.apache.calcite.rel.core.Aggregate;
+import org.apache.calcite.rel.core.Aggregate.Group;
 import org.apache.calcite.rel.core.AggregateCall;
 import org.apache.calcite.rel.core.JoinRelType;
 import org.apache.calcite.rel.core.RelFactories;
@@ -158,7 +159,7 @@ public final class AggregateExpandDistinctAggregatesRule extends RelOptRule {
     // arguments then we can use a more efficient form.
     if (nonDistinctAggCallCount == 0
         && argLists.size() == 1
-        && aggregate.getGroupSets().size() == 1) {
+        && aggregate.getGroupType() == Group.SIMPLE) {
       final Pair<List<Integer>, Integer> pair =
           Iterables.getOnlyElement(argLists);
       final RelBuilder relBuilder = call.builder();
@@ -293,7 +294,7 @@ public final class AggregateExpandDistinctAggregatesRule extends RelOptRule {
       if (!aggCall.isDistinct()) {
         final AggregateCall newCall =
             AggregateCall.create(aggCall.getAggregation(), false,
-                aggCall.getArgList(), -1,
+                aggCall.isApproximate(), aggCall.getArgList(), -1,
                 ImmutableBitSet.of(bottomGroupSet).cardinality(),
                 relBuilder.peek(), null, aggCall.name);
         bottomAggregateCalls.add(newCall);
@@ -318,9 +319,9 @@ public final class AggregateExpandDistinctAggregatesRule extends RelOptRule {
           newArgList.add(bottomGroupSet.headSet(arg).size());
         }
         newCall =
-            AggregateCall.create(
-                aggCall.getAggregation(),
+            AggregateCall.create(aggCall.getAggregation(),
                 false,
+                aggCall.isApproximate(),
                 newArgList,
                 -1,
                 originalGroupSet.cardinality(),
@@ -334,12 +335,14 @@ public final class AggregateExpandDistinctAggregatesRule extends RelOptRule {
             Lists.newArrayList(bottomGroupSet.size() + nonDistinctAggCallProcessedSoFar);
         if (aggCall.getAggregation().getKind() == SqlKind.COUNT) {
           newCall =
-              AggregateCall.create(new SqlSumEmptyIsZeroAggFunction(), false, newArgs, -1,
+              AggregateCall.create(new SqlSumEmptyIsZeroAggFunction(), false,
+                  aggCall.isApproximate(), newArgs, -1,
                   originalGroupSet.cardinality(), relBuilder.peek(),
                   aggCall.getType(), aggCall.getName());
         } else {
           newCall =
-              AggregateCall.create(aggCall.getAggregation(), false, newArgs, -1,
+              AggregateCall.create(aggCall.getAggregation(), false,
+                  aggCall.isApproximate(), newArgs, -1,
                   originalGroupSet.cardinality(),
                   relBuilder.peek(), aggCall.getType(), aggCall.name);
         }
@@ -389,7 +392,11 @@ public final class AggregateExpandDistinctAggregatesRule extends RelOptRule {
     final List<AggregateCall> distinctAggCalls = new ArrayList<>();
     for (Pair<AggregateCall, String> aggCall : aggregate.getNamedAggCalls()) {
       if (!aggCall.left.isDistinct()) {
-        distinctAggCalls.add(aggCall.left.rename(aggCall.right));
+        AggregateCall newAggCall =
+            aggCall.left.adaptTo(aggregate.getInput(),
+                aggCall.left.getArgList(), aggCall.left.filterArg,
+                aggregate.getGroupCount(), fullGroupSet.cardinality());
+        distinctAggCalls.add(newAggCall.rename(aggCall.right));
       }
     }
 
@@ -400,7 +407,7 @@ public final class AggregateExpandDistinctAggregatesRule extends RelOptRule {
     final Map<ImmutableBitSet, Integer> filters = new LinkedHashMap<>();
     final int z = groupCount + distinctAggCalls.size();
     distinctAggCalls.add(
-        AggregateCall.create(SqlStdOperatorTable.GROUPING, false,
+        AggregateCall.create(SqlStdOperatorTable.GROUPING, false, false,
             ImmutableIntList.copyOf(fullGroupSet), -1, groupSets.size(),
             relBuilder.peek(), null, "$g"));
     for (Ord<ImmutableBitSet> groupSet : Ord.zip(groupSets)) {
@@ -446,8 +453,9 @@ public final class AggregateExpandDistinctAggregatesRule extends RelOptRule {
                     .union(aggregate.getGroupSet()));
       }
       final AggregateCall newCall =
-          AggregateCall.create(aggregation, false, newArgList, newFilterArg,
-              aggregate.getGroupCount(), distinct, null, aggCall.name);
+          AggregateCall.create(aggregation, false, aggCall.isApproximate(),
+              newArgList, newFilterArg, aggregate.getGroupCount(), distinct,
+              null, aggCall.name);
       newCalls.add(newCall);
     }
 
@@ -655,7 +663,8 @@ public final class AggregateExpandDistinctAggregatesRule extends RelOptRule {
       final int newFilterArg =
           aggCall.filterArg >= 0 ? sourceOf.get(aggCall.filterArg) : -1;
       final AggregateCall newAggCall =
-          AggregateCall.create(aggCall.getAggregation(), false, newArgs,
+          AggregateCall.create(aggCall.getAggregation(), false,
+              aggCall.isApproximate(), newArgs,
               newFilterArg, aggCall.getType(), aggCall.getName());
       assert refs.get(i) == null;
       if (n == 0) {
@@ -743,7 +752,8 @@ public final class AggregateExpandDistinctAggregatesRule extends RelOptRule {
         newArgs.add(sourceOf.get(arg));
       }
       final AggregateCall newAggCall =
-          AggregateCall.create(aggCall.getAggregation(), false, newArgs, -1,
+          AggregateCall.create(aggCall.getAggregation(), false,
+              aggCall.isApproximate(), newArgs, -1,
               aggCall.getType(), aggCall.getName());
       newAggCalls.set(i, newAggCall);
     }

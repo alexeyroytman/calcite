@@ -500,6 +500,7 @@ public abstract class RelOptUtil {
       final AggregateCall aggCall =
           AggregateCall.create(SqlStdOperatorTable.MIN,
               false,
+              false,
               ImmutableList.of(0),
               -1,
               0,
@@ -545,7 +546,7 @@ public abstract class RelOptUtil {
     switch (logic) {
     case TRUE_FALSE_UNKNOWN:
     case UNKNOWN_AS_TRUE:
-      if (!containsNullableFields(seekRel)) {
+      if (notIn && !containsNullableFields(seekRel)) {
         logic = Logic.TRUE_FALSE;
       }
     }
@@ -577,6 +578,7 @@ public abstract class RelOptUtil {
 
     final AggregateCall aggCall =
         AggregateCall.create(SqlStdOperatorTable.MIN,
+            false,
             false,
             ImmutableList.of(projectedKeyCount),
             -1,
@@ -781,8 +783,8 @@ public abstract class RelOptUtil {
     for (int i = 0; i < aggCallCnt; i++) {
       aggCalls.add(
           AggregateCall.create(
-              SqlStdOperatorTable.SINGLE_VALUE, false, ImmutableList.of(i), -1,
-              0, rel, null, null));
+              SqlStdOperatorTable.SINGLE_VALUE, false, false,
+              ImmutableList.of(i), -1, 0, rel, null, null));
     }
 
     return LogicalAggregate.create(rel, ImmutableBitSet.of(), null, aggCalls);
@@ -3291,12 +3293,7 @@ public abstract class RelOptUtil {
     return relBuilder.build();
   }
 
-  /**
-   * Pushes down expressions in "equal" join condition, using the default
-   * builder.
-   *
-   * @see #pushDownJoinConditions(Join, RelBuilder)
-   */
+  @Deprecated // to be removed before 2.0
   public static RelNode pushDownJoinConditions(Join originalJoin) {
     return pushDownJoinConditions(originalJoin, RelFactories.LOGICAL_BUILDER);
   }

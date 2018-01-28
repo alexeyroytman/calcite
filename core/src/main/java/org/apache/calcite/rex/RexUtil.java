@@ -310,6 +310,17 @@ public class RexUtil {
     return false;
   }
 
+  /** Removes any casts that change nullability but not type.
+   *
+   * <p>For example, {@code CAST(1 = 0 AS BOOLEAN)} becomes {@code 1 = 0}. */
+  public static RexNode removeNullabilityCast(RelDataTypeFactory typeFactory,
+      RexNode node) {
+    while (isNullabilityCast(typeFactory, node)) {
+      node = ((RexCall) node).operands.get(0);
+    }
+    return node;
+  }
+
   /** Creates a map containing each (e, constant) pair that occurs within
    * a predicate list.
    *
@@ -2574,10 +2585,17 @@ public class RexUtil {
   public static class ExprSimplifier extends RexShuttle {
     private final RexSimplify simplify;
     private final Map<RexNode, Boolean> unknownAsFalseMap;
+    private final boolean matchNullability;
 
+    @Deprecated // to be removed before 2.0
     public ExprSimplifier(RexSimplify simplify) {
+      this(simplify, true);
+    }
+
+    public ExprSimplifier(RexSimplify simplify, boolean matchNullability) {
       this.simplify = simplify;
       this.unknownAsFalseMap = new HashMap<>();
+      this.matchNullability = matchNullability;
     }
 
     @Override public RexNode visitCall(RexCall call) {
@@ -2611,7 +2629,7 @@ public class RexUtil {
       if (simplifiedNode.getType().equals(call.getType())) {
         return simplifiedNode;
       }
-      return simplify.rexBuilder.makeCast(call.getType(), simplifiedNode, true);
+      return simplify.rexBuilder.makeCast(call.getType(), simplifiedNode, matchNullability);
     }
   }
 }

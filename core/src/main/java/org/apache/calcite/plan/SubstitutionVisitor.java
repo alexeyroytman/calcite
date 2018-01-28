@@ -1264,7 +1264,7 @@ public class SubstitutionVisitor {
         }
         aggregateCalls.add(
             AggregateCall.create(getRollup(aggregateCall.getAggregation()),
-                aggregateCall.isDistinct(),
+                aggregateCall.isDistinct(), aggregateCall.isApproximate(),
                 ImmutableList.of(target.groupSet.cardinality() + i), -1,
                 aggregateCall.type, aggregateCall.name));
       }
@@ -1545,12 +1545,18 @@ public class SubstitutionVisitor {
         };
 
     public static final FilterOnProjectRule INSTANCE =
-        new FilterOnProjectRule();
+        new FilterOnProjectRule(RelFactories.LOGICAL_BUILDER);
 
-    private FilterOnProjectRule() {
+    /**
+     * Creates a FilterOnProjectRule.
+     *
+     * @param relBuilderFactory Builder for relational expressions
+     */
+    public FilterOnProjectRule(RelBuilderFactory relBuilderFactory) {
       super(
           operand(LogicalFilter.class, null, PREDICATE,
-              some(operand(LogicalProject.class, any()))));
+              some(operand(LogicalProject.class, any()))),
+          relBuilderFactory, null);
     }
 
     public void onMatch(RelOptRuleCall call) {
